@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>three.js webgl - FBX loader</title>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0"
+    />
+    <script src="http://unpkg.com/tone"></script>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+
+  <body>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./js/three.module.js"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import * as THREE from "three";
+
+      import Stats from "./js/stats.module.js";
+
+      import { OrbitControls } from "./js/OrbitControls.js";
+      import { HDRLoader } from "./js/HDRLoader.js";
+      import { FBXLoader } from "./js/FBXLoader.js";
+      import { GUI } from "./js/lil-gui.module.min.js";
+      import { Reflector } from "./js/Reflector.js";
+      import { LineMaterial } from "./js/lines/LineMaterial.js";
+      import { Wireframe } from "./js/lines/Wireframe.js";
+      import { WireframeGeometry2 } from "./js/lines/WireframeGeometry2.js";
+
+      const manager = new THREE.LoadingManager();
+
+      let camera, scene, renderer, stats, object, loader, guiMorphsFolder;
+      let mixer, controls;
+
+      const clock = new THREE.Clock();
+
+      const params = {
+        asset: "Macarena Dance",
+      };
+
+      const assets = [
+        "Macarena Dance",
+        "Y BOT",
+        // 'monkey',
+        // 'monkey_embedded_texture',
+        // 'vCube',
+      ];
+
+      // 初始化Three.js
+      init();
+
+      // 创建播放按钮
+      const playButton = document.createElement("button");
+      playButton.textContent = "Play Audio";
+      playButton.style.position = "absolute";
+      playButton.style.bottom = "10px";
+      playButton.style.left = "50%";
+      playButton.style.transform = "translateX(-50%)";
+      playButton.style.zIndex = "1000";
+      playButton.style.padding = "10px 20px";
+      playButton.style.fontSize = "16px";
+      playButton.style.cursor = "pointer";
+      playButton.style.backgroundColor = "rgba(255, 255, 255, 0.7)";
+      playButton.style.border = "1px solid rgba(255, 255, 255, 0.5)";
+      playButton.style.borderRadius = "20px";
+      document.body.appendChild(playButton);
+
+      // 音频播放状态
+      let isAudioPlaying = false;
+
+      playButton.addEventListener("click", () => {
+        if (!isAudioPlaying) {
+          // 开始播放音频
+          Tone.Transport.start();
+          playButton.textContent = "Pause Audio";
+          isAudioPlaying = true;
+        } else {
+          // 暂停音频
+          Tone.Transport.pause();
+          playButton.textContent = "Play Audio";
+          isAudioPlaying = false;
+        }
+      });
+
+      function init() {
+        const container = document.createElement("div");
+        document.body.appendChild(container);
+
+        camera = new THREE.PerspectiveCamera(
+          45,
+          window.innerWidth / window.innerHeight,
+          1,
+          2000
+        );
+        camera.position.set(100, 200, 300);
+
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x000000);
+
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 5);
+        hemiLight.position.set(0, 200, 0);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 5);
+        dirLight.position.set(0, 200, 100);
+        dirLight.castShadow = true;
+        dirLight.shadow.camera.top = 180;
+        dirLight.shadow.camera.bottom = -100;
+        dirLight.shadow.camera.left = -120;
+        dirLight.shadow.camera.right = 120;
+        scene.add(dirLight);
+        // 初始化Tone.js并创建demo.js中的旋律序列
+        // 创建多种乐器
+        music();
+        // ground
+        const groundGeometry = new THREE.CircleGeometry(800, 32);
+        const groundMirror = new Reflector(groundGeometry, {
+          color: 0xffffff,
+          textureWidth: window.innerWidth * window.devicePixelRatio,
+          textureHeight: window.innerHeight * window.devicePixelRatio,
+          clipBias: 0.003,
+          opacity: 0.5, // 半透明效果
+          transparent: true,
+        });
+        groundMirror.position.y = 0;
+        groundMirror.rotation.x = -Math.PI / 2;
+        scene.add(groundMirror);
+
+        // 创建几何体
+        const geo = new THREE.IcosahedronGeometry(800, 1);
+        const geometry = new WireframeGeometry2(geo);
+        const material = new LineMaterial({
+          color: 0xffffff,
+          linewidth: 20, // in pixels
+          dashed: false,
+        });
+        // 创建全局Wireframe对象
+        window.wireframeMesh = new Wireframe(geometry, material);
+        window.wireframeMesh.computeLineDistances();
+        scene.add(window.wireframeMesh);
+
+        loader = new FBXLoader(manager);
+        // loadAsset( params.asset );
+        loadAsset(params.asset);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setAnimationLoop(animate);
+        renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 100, 0);
+        controls.maxDistance = 800;
+        // 限制摄像机垂直角度，不高于170度(约2.9671弧度)
+        controls.maxPolarAngle = (Math.PI * 90) / 180;
+        // 启用自动旋转
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 1; // 调整旋转速度
+        // 启用惯性效果
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.update();
+
+        window.addEventListener("resize", onWindowResize);
+
+        // stats
+        stats = new Stats();
+        container.appendChild(stats.dom);
+
+        const gui = new GUI().hide();
+        gui.add(params, "asset", assets).onChange(function (value) {
+          loadAsset(value);
+        }).hide();
+
+        guiMorphsFolder = gui.addFolder("Morphs").hide();
+
+        new HDRLoader()
+          .setPath("source/")
+          .load("bot_texture.hdr", function (texture) {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            scene.environment = texture;
+            scene.environmentIntensity = 1.5;
+
+            // 环境贴图加载完成后，重新应用所有模型的镜面材质效果
+            if (object) {
+              object.traverse(function (child) {
+                if (child.isMesh && child.material) {
+                  const materials = Array.isArray(child.material)
+                    ? child.material
+                    : [child.material];
+                  materials.forEach(function (material) {
+                    material.metalness = 1.0;
+                    material.roughness = 0.0;
+                    material.envMap = scene.environment;
+                    material.envMapIntensity = 1.5;
+                  });
+                }
+              });
+            }
+          });
+      }
+
+      function loadAsset(asset) {
+        let robot = null;
+        loader.load("./source/Y Bot.fbx", function (group) {
+          if (object) {
+            object.traverse(function (child) {
+              if (child.isSkinnedMesh) {
+                child.skeleton.dispose();
+              }
+
+              if (child.material) {
+                const materials = Array.isArray(child.material)
+                  ? child.material
+                  : [child.material];
+                materials.forEach((material) => {
+                  if (material.map) material.map.dispose();
+                  material.dispose();
+                });
+              }
+
+              if (child.geometry) child.geometry.dispose();
+            });
+
+            scene.remove(object);
+          }
+
+          object = group;
+          robot = object;
+
+          guiMorphsFolder.children.forEach((child) => child.destroy());
+          guiMorphsFolder.hide();
+
+          object.traverse(function (child) {
+            if (child.isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+
+              // 强制替换为具有镜面效果的新材质
+              if (child.material) {
+                // 创建具有镜面效果的新材质
+                const newMaterial = new THREE.MeshStandardMaterial({
+                  metalness: 1.0,
+                  roughness: 0.0,
+                  color: 0xffffff,
+                  envMap: scene.environment,
+                  envMapIntensity: 1.5,
+                });
+
+                // 如果原材质有贴图，尝试保留颜色贴图
+                const materials = Array.isArray(child.material)
+                  ? child.material
+                  : [child.material];
+                materials.forEach(function (material) {
+                  if (material.map) {
+                    newMaterial.map = material.map;
+                  }
+                });
+
+                // 应用新材质
+                child.material = newMaterial;
+              }
+
+              if (child.morphTargetDictionary) {
+                guiMorphsFolder.show();
+                const meshFolder = guiMorphsFolder.addFolder(
+                  child.name || child.uuid
+                );
+                Object.keys(child.morphTargetDictionary).forEach((key) => {
+                  meshFolder.add(
+                    child.morphTargetInfluences,
+                    child.morphTargetDictionary[key],
+                    0,
+                    1,
+                    0.01
+                  );
+                });
+              }
+            }
+          });
+
+          scene.add(object);
+        });
+        loader.load("./source/Macarena Dance.fbx", function (animation) {
+          if (robot) {
+            mixer = new THREE.AnimationMixer(robot);
+
+            // 获取Macarena Dance动画的第一个剪辑
+            if (animation.animations && animation.animations.length > 0) {
+              const action = mixer.clipAction(animation.animations[0]);
+              action.play();
+            }
+
+            // 强制替换为具有镜面效果的新材质
+            robot.traverse(function (child) {
+              if (child.isMesh && child.material) {
+                // 创建具有镜面效果的新材质
+                const newMaterial = new THREE.MeshStandardMaterial({
+                  metalness: 1.0,
+                  roughness: 0.0,
+                  color: 0xffffff,
+                  envMap: scene.environment,
+                  envMapIntensity: 1.5,
+                });
+
+                // 如果原材质有贴图，尝试保留颜色贴图
+                const materials = Array.isArray(child.material)
+                  ? child.material
+                  : [child.material];
+                materials.forEach(function (material) {
+                  if (material.map) {
+                    newMaterial.map = material.map;
+                  }
+                });
+
+                // 应用新材质
+                child.material = newMaterial;
+              }
+            });
+          } else {
+            mixer = null;
+          }
+        });
+      }
+
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+
+      function music() {
+        const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+        synth.volume.value = -12;
+        // 鼓组乐器
+        const hat = new Tone.Player({
+          url: "./source/audio/hi-hat.mp3",
+        }).toDestination();
+        hat.volume.value = -21;
+
+        const kick = new Tone.Player({
+          url: "./source/audio/kick.mp3",
+        }).toDestination();
+
+        const shaker = new Tone.Player({
+          url: "./source/audio/shaker.mp3",
+        }).toDestination();
+        shaker.volume.value = -16;
+
+        const vibraslap = new Tone.Player({
+          url: "./source/audio/男衆「オウ！」.mp3",
+        }).toDestination();
+        vibraslap.volume.value = -6;
+
+        const crossSticks = new Tone.Player({
+          url: "./source/audio/cross-sticks.mp3",
+        }).toDestination();
+        crossSticks.volume.value = -18;
+
+        const woodBlock = new Tone.Player({
+          url: "./source/audio/wood-block.mp3",
+        }).toDestination();
+        woodBlock.volume.value = -20;
+
+        // 创建旋律序列
+        // 1. Hi-hat序列
+        const hatPart = new Tone.Part(
+          (time) => {
+            hat.start(time);
+          },
+          [
+            {
+              time: "0:0",
+              note: "C4",
+            },
+            {
+              time: "0:0:2",
+              note: "C4",
+            },
+            {
+              time: "0:0:3",
+              note: "C4",
+            },
+            {
+              time: "0:0:4",
+              note: "C4",
+            },
+            {
+              time: "1:0:2",
+              note: "C4",
+            },
+            
+          ]
+        ).start(0);
+
+        // 2. Kick序列
+        const kickPart = new Tone.Part(
+          (time, note) => {
+            kick.start(time);
+            console.log("kick");
+
+            // 触发wireframeMesh线条宽度变化动画
+            if (window.wireframeMesh && window.wireframeMesh.material) {
+              // 保存原始线条宽度
+              const originalLinewidth = window.wireframeMesh.material.linewidth;
+              const startLinewidth = originalLinewidth;
+              const targetLinewidth1 = 60;
+              const targetLinewidth2 = originalLinewidth;
+              const duration1 = 100; // 0.3秒内增加到40
+              const duration2 = 200; // 0.2秒内回到20
+
+              // 动画开始时间
+              const startTime = Date.now();
+
+              // 渐变函数
+              const easeInOutQuad = function (t) {
+                return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+              };
+
+              // 动画函数
+              const animateLinewidth = function () {
+                const elapsed = Date.now() - startTime;
+                let progress = elapsed / duration1;
+
+                if (progress <= 1) {
+                  // 第一阶段：从20增加到40
+                  const easedProgress = easeInOutQuad(progress);
+                  window.wireframeMesh.material.linewidth =
+                    startLinewidth +
+                    (targetLinewidth1 - startLinewidth) * easedProgress;
+                  requestAnimationFrame(animateLinewidth);
+                } else {
+                  // 第二阶段：从40回到20
+                  const elapsed2 = elapsed - duration1;
+                  let progress2 = elapsed2 / duration2;
+
+                  if (progress2 <= 1) {
+                    const easedProgress2 = easeInOutQuad(progress2);
+                    window.wireframeMesh.material.linewidth =
+                      targetLinewidth1 +
+                      (targetLinewidth2 - targetLinewidth1) * easedProgress2;
+                    requestAnimationFrame(animateLinewidth);
+                  } else {
+                    // 动画结束，确保回到原始值
+                    window.wireframeMesh.material.linewidth = originalLinewidth;
+                  }
+                }
+              };
+
+              // 启动动画
+              animateLinewidth();
+            }
+          },
+          [
+            {
+              time: "0:0:0",
+              note: "C4",
+            },
+            {
+              time: "0:0:6",
+              note: "C4",
+            },
+          ]
+        ).start(0);
+
+        // 3. Shaker序列
+        const shakerPart = new Tone.Part(
+          (time, note) => {
+            shaker.start(time);
+          },
+          [
+            // {
+            //   time: "0:0:0",
+            //   note: "C4",
+            // },
+            // {
+            //   time: "0:0:1",
+            //   note: "C4",
+            // },
+            // {
+            //   time: "0:0:2",
+            //   note: "C4",
+            // },
+            // {
+            //   time: "0:1:2",
+            //   note: "C4",
+            // },
+            // {
+            //   time: "0:2:2",
+            //   note: "C4",
+            // },
+            // {
+            //   time: "0:2:3",
+            //   note: "C4",
+            // },
+            {
+              time: "0:3:0",
+              note: "C4",
+            },
+            {
+              time: "0:3:2",
+              note: "C4",
+            },
+            {
+              time: "1:2:0",
+              note: "C4",
+            },
+            // {
+            //   time: "1:2:1",
+            //   note: "C4",
+            // },
+          ]
+        ).start(0);
+
+        // 4. Vibraslap序列
+        const vibraslapPart = new Tone.Part(
+          (time) => {
+            vibraslap.start(time);
+          },
+          [
+            {
+              time: "0:0",
+              note: "C4",
+            },
+          ]
+        ).start("2n");
+
+        // 5. Cross-sticks序列
+        const crossSticksPart = new Tone.Part(
+          (time, note) => {
+            crossSticks.start(time);
+          },
+          [
+            {
+              time: "0:1:0",
+              note: "C4",
+            },
+            {
+              time: "0:2:0",
+              note: "C4",
+            },
+            {
+              time: "1:0:0",
+              note: "C4",
+            },
+            {
+              time: "1:1:2",
+              note: "C4",
+            },
+            {
+              time: "1:3:0",
+              note: "C4",
+            },
+            {
+              time: "1:3:2",
+              note: "C4",
+            },
+            {
+              time: "1:4:0",
+              note: "C4",
+            },
+          ]
+        ).start(0);
+
+        // 6. Wood-block序列
+        const woodBlockPart = new Tone.Part(
+          (time) => {
+            woodBlock.start(time);
+          },
+          [
+            {
+              time: "0:0",
+              note: "C4",
+            },
+            {
+              time: "0:1",
+              note: "C4",
+            },
+            {
+              time: "0:2",
+              note: "C4",
+            },
+          ]
+        ).start("1m");
+
+        // 设置播放参数
+        Tone.Transport.bpm.value = 130;
+        Tone.Transport.loop = true;
+        Tone.Transport.loopEnd = "2m";
+
+        // 等待所有音频文件加载完成
+        Tone.loaded().then(() => {
+          console.log("All audio files loaded");
+        });
+      }
+
+      //
+
+      function animate() {
+        const delta = clock.getDelta();
+
+        if (mixer) mixer.update(delta);
+
+        // 使Wireframe几何体自旋转
+        if (window.wireframeMesh) {
+          window.wireframeMesh.rotation.x += delta * 0.2;
+          window.wireframeMesh.rotation.y += delta * 0.2;
+        }
+
+        // 更新OrbitControls以实现自动旋转
+        controls.update();
+
+        renderer.render(scene, camera);
+
+        stats.update();
+      }
+    </script>
+  </body>
+</html>
