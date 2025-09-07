@@ -93,7 +93,11 @@
       // 音频播放状态
       let isAudioPlaying = false;
 
-      playButton.addEventListener("click", () => {
+      playButton.addEventListener("click", async () => {
+        // 启动音频上下文
+        await Tone.start();
+        console.log("Audio is ready");
+        
         if (!isAudioPlaying) {
           // 开始播放音频
           Tone.Transport.start();
